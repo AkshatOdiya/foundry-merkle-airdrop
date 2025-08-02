@@ -11,5 +11,7 @@ remappings = [
 fs_permissions = [
     { access = "read-write", path = "script/target/input.json" },
     { access = "read-write", path = "script/target/output.json" },
+    { access = "read", path = "broadcast/" },
+    { access = "read", path = "signature.txt" },                   # this file will be created by interactZk.sh and later deleted also
 ]
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
