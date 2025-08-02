@@ -1,3 +1,52 @@
+/**
+ * @notice logic overview:
+ * The MakeMerkle.s.sol script performs the following main operations:
+ *
+ * a. Read and Parse input.json: Uses vm.readFile() to load the content of script/target/input.json. Then, it uses stdJson cheatcodes (e.g., stdJson.readStringArray(json, ".types"), stdJson.readUint(json, ".count")) to parse the JSON data into Solidity variables.
+ *
+ * b. Process Each Leaf Entry:
+ *
+ * Iterates count times (once for each leaf defined in input.json).
+ *
+ * For each leaf, it reads the constituent parts (e.g., address and amount) based on the types array.
+ *
+ * Address to bytes32 Conversion: Ethereum addresses are 20 bytes. For cryptographic hashing within the Merkle tree, they need to be converted to bytes32. This is typically done by casting: address -> uint160 -> uint256 -> bytes32. The amount (uint) is also cast to bytes32.
+ *
+ * These bytes32 values are stored temporarily for the current leaf.
+ *
+ * c. Leaf Hash Calculation:
+ *
+ * The bytes32 representations of the leaf's data (e.g., address and amount) are ABI-encoded together: abi.encode(data_part1_bytes32, data_part2_bytes32, ...).
+ *
+ * Trimming ABI Encoding: The ScriptHelper.ltrim64() function from murky is used. When dynamic types (like arrays) are declared in memory and then ABI-encoded, the encoding includes offsets and lengths. ltrim64 removes these, providing the tightly packed data bytes suitable for hashing.
+ *
+ * Double Hashing: The trimmed, ABI-encoded data is then hashed, typically twice: keccak256(bytes.concat(keccak256(trimmed_encoded_data))). This double hashing is a common practice in Merkle tree implementations to mitigate potential vulnerabilities like second-preimage attacks, especially if parts of the tree structure might be known or manipulated.
+ *
+ * The resulting bytes32 hash is the leaf hash for the current entry and is stored in an array of leaves.
+ *
+ * d. Generate Merkle Root and Proofs:
+ *
+ * After all leaf hashes are computed and collected in the leaves array:
+ *
+ * An instance of murky's Merkle library is used.
+ *
+ * For each leaf i:
+ *
+ * merkleInstance.getProof(leaves, i): Retrieves the Merkle proof for the i-th leaf.
+ *
+ * merkleInstance.getRoot(leaves): Retrieves the Merkle root of the entire tree (this will be the same for all leaves).
+ *
+ * e. Construct and Write output.json:
+ *
+ * For each leaf, the script gathers its original input values (as strings), its computed leaf hash, its proof, and the common root.
+ *
+ * This information is formatted into a JSON object structure as described earlier for output.json.
+ *
+ * All these individual JSON entry strings are collected and combined into a single valid JSON array string.
+ *
+ * vm.writeFile("script/target/output.json", finalJsonString) saves the complete Merkle tree data.
+ */
+
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
