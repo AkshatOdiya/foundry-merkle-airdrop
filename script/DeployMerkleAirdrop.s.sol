@@ -14,8 +14,8 @@ contract DeployMerkleAirdrop is Script {
         vm.startBroadcast();
         token = new SimpleToken();
         airdrop = new MerkleAirdrop(ROOT, token);
-        token.mint(token.owner(), AMOUNT_TO_TRANSFER);
-        token.transfer(address(airdrop), AMOUNT_TO_TRANSFER);
+        token.mint(token.owner(), AMOUNT_TO_TRANSFER); // This contract is owner as it is deploying token, airdrop
+        token.transfer(address(airdrop), AMOUNT_TO_TRANSFER); // transfer to airdrop so that claimers can claim from it
         vm.stopBroadcast();
     }
 }
