@@ -51,8 +51,16 @@ contract MerkleAirdropTest is ZkSyncChainChecker, Test {
 
     function testUsersCanClaim() public {
         uint256 startingBalance = token.balanceOf(user);
+
+        // 1. Get the message digest that the user needs to sign
+        // This calls the getMessageHash function from the MerkleAirdrop contract
         bytes32 digest = airdrop.getMessageHash(user, AMOUNT);
+
+        // 2. User signs the digest using their private key
+        // vm.sign is a Foundry cheatcode
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(userPrivKey, digest);
+
+        // 3. The gasPayer calls the claim function with the user's signature
         vm.prank(gasPayer);
         airdrop.claim(user, AMOUNT, PROOF, v, r, s);
 
