@@ -1192,3 +1192,183 @@ Let's break down the key fields:
 In essence, Type 113 transactions are zkSync's native mechanism for realizing the benefits of Account Abstraction, often compared to what EIP-4337 aims to achieve on Ethereum L1 but implemented directly at the protocol level on zkSync. They allow every user account to be a powerful, programmable smart contract, triggered by user signatures (like EIP-712) and capable of sophisticated custom logic.
 
 
+## Crafting the Signature: Generating the Message Hash and Signing The Message Hash
+
+A digital signature is created for a specific piece of data. To ensure security and efficiency, we don't sign the raw data directly but rather its cryptographic hash. The `MerkleAirdrop.sol` contract includes a helper function, `getMessageHash`, designed for this purpose, often adhering to the EIP-712 standard for typed data hashing.
+
+The `getMessageHash` function in `MerkleAirdrop.sol` typically looks like this:
+
+```solidity
+// src/MerkleAirdrop.sol
+function getMessageHash(address account, uint256 amount) public view returns (bytes32) {
+    return _hashTypedDataV4(
+        keccak256(abi.encode(MESSAGE_TYPEHASH, AirdropClaim({account: account, amount: amount})))
+    );
+}
+```
+
+This function constructs a unique, fixed-size hash based on the `account` eligible for the airdrop and the `amount` of tokens they can claim. The `_hashTypedDataV4` function implies an EIP-712 compliant structure, which provides context and domain separation for signatures, preventing replay attacks across different contracts or applications.
+
+To obtain this message hash, you can use Foundry's `cast call` command to invoke `getMessageHash` on your deployed `MerkleAirdrop` contract. The command requires:
+
+1. The `MerkleAirdrop` contract address (from the deployment step).
+
+2. The function signature: `"getMessageHash(address,uint256)"`.
+
+3. The arguments for the function: the claimant's address and the claimable amount (in wei).
+
+4. The RPC URL of your Anvil node.
+
+For example, to get the message hash for `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266` claiming 25 tokens (assuming 18 decimals, so `25000000000000000000` wei):
+
+```bash
+cast call 0xe7f1725E7734CE288F83E7E1B143E90b3F0512 "getMessageHash(address,uint256)" 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 25000000000000000000 --rpc-url http://localhost:8545
+```
+This command will return the `bytes32` message hash, for instance:
+`0x184e30c19f5e304a09352421dc58346dad61e12f9155b910e73fd856dc72`
+
+This hash is the precise data that needs to be signed.
+
+### Signing this Message Hash
+
+Once you have the message hash, the next step is to sign it using a private key. This signature serves as cryptographic proof that the owner of the private key authorizes the action associated with the message hash (in this case, claiming tokens). Foundry's `cast wallet sign` command facilitates this.
+
+The command requires the following:
+
+1. The message hash obtained in the previous step.
+
+2. The `--private-key` flag followed by the private key of the signing account. For this Merkle Airdrop scenario, this would be the private key of an account authorized to approve claims (e.g., an admin or the deployer, or for testing, one of Anvil's default accounts).
+
+3. The `--no-hash` flag: This is critically important. Since the getMessageHash function already computed the cryptographic hash of the typed data, cast wallet sign must be instructed not to hash its input again. If `--no-hash` is omitted, `cast wallet sign` would hash the already-hashed input, leading to an incorrect signature that the smart contract will reject.
+
+Using the example message hash from before and the first default Anvil private key (e.g., `0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80`, which Anvil prints on startup):
+
+```bash
+cast wallet sign --no-hash 0x184e30c19f5e304a09352421dc58346dad61e12f9155b910e73fd856dc72 --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+```
+This command will output the digital signature as a hexadecimal string, for example:
+`0xfbd277f062f5b1f52b40dfce9de460171bb0c4238b5c4d75b0d384ed3b6c46ceaeaa570afeecb671d4c11c`
+
+It's worth noting that if you were operating on a testnet or mainnet and your private key was managed in an encrypted keystore file, you would use the `--account <ACCOUNT_ALIAS_OR_ADDRESS>` flag instead of `--private-key`. `cast` would then prompt for your keystore password.
+
+## Splitting a Concatenated Signature (r, s, v) in Solidity
+When working with cryptographic signatures in Web3, particularly within Solidity scripts for frameworks like Foundry, you'll often encounter signatures as a single, raw, concatenated hexadecimal string. This string typically represents the `r`, `s`, and `v` components of an ECDSA signature packed together. However, many smart contract functions, especially those designed for EIP-712 typed data verification or general signature recovery (e.g., `ecrecover`), require these `v`, `r`, and `s` values as separate arguments. 
+
+### Storing the Raw Signature in Your Solidity Script
+The first step is to incorporate the raw signature into your script. If you've generated a signature using a tool like `cast wallet sign` (e.g., `cast wallet sign --no-hash <hashed_message> --private-key <your_private_key>`), you'll receive a hexadecimal string.
+
+This signature can be stored in a `bytes` variable within your Solidity script using the `hex` literal notation:
+
+```solidity
+// Example signature: 0xfb2270e6f23fb5fe924848c0f4be8a4e9b077c3ad0b1333cc60b5debc511602a2a06c24085d807c830bad8baedc536
+bytes private SIGNATURE = hex"fb2270e6f23fb5fe924848c0f4be8a4e9b077c3ad0b1333cc60b5debc511602a2a06c24085d807c830bad8baedc536";
+```
+* `hex"..."` **Literal**: The `hex` keyword allows you to define byte literals directly from a hexadecimal string. Notice that the `0x` prefix, commonly seen in hexadecimal representations, is omitted when using this literal form.
+
+* `private` **Visibility**: Declaring the variable as `private` (e.g., `bytes private SIGNATURE`) restricts its accessibility, preventing inheriting contracts or other scripts from directly accessing it if such access is not intended. This promotes encapsulation.
+
+### Why abi.decode is Unsuitable for Packed Signatures
+A common question is whether `abi.decode` can be used to parse the raw signature. For instance, one might intuitively try `abi.decode(SIGNATURE, (uint8, bytes32, bytes32))`. However, this approach will not work for typical concatenated signatures.
+
+The reason lies in how these signatures are usually formed. They are generally the result of a direct concatenation, akin to `abi.encodePacked(r, s, v)`. `abi.encodePacked` concatenates the data directly without including any length or offset information for the encoded elements. In contrast, `abi.decode` is designed to work with data encoded using `abi.encode`, which includes metadata necessary to parse dynamically sized types or multiple elements. Since the raw signature lacks this metadata, `abi.decode` cannot correctly interpret its structure.
+
+### Implementing the splitSignature Helper Function
+
+```solidity
+    /**
+     * @notice Splits a 65-byte concatenated signature (r, s, v) into its components
+     * @param sig The concatenated signature as bytes.
+     * @return v The recovery identifier (1 byte)
+     * @return r The r value of the signature (32 bytes)
+     * @return s The s value of the signature (32 bytes)
+     */
+    // Besides vm.sign, we can generate v,r,s from signature by this mechanism
+    function splitSignature(bytes memory sig) public pure returns (uint8 v, bytes32 r, bytes32 s) {
+        // Standard ECDSA signatures are 65 bytes long:
+        // r (32 bytes) + s (32 bytes) + v (1 byte)
+        if (sig.length != 65) {
+            revert Interactions__InvalidSignatureLength();
+        }
+
+        // Accessing bytes data in assembly requires careful memory management.
+        // `sig` in assembly points to the length of the byte array.
+        // The actual data starts 32 bytes after this pointer.
+        assembly {
+            // Load the first 32 bytes (r)
+            r := mload(add(sig, 32))
+            // Load the next 32 bytes (s)
+            s := mload(add(sig, 64))
+            // Load the last byte (v)
+            // v is the first byte of the 32-byte word starting at offset 96 (0x60)
+            v := byte(0, mload(add(sig, 96)))
+        }
+    }
+```
+### Deep Dive: How the Assembly Code Splits the Signature
+The core of the `splitSignature` function lies in its assembly block, which allows for precise low-level memory manipulation. Understanding this block is key to grasping how the signature is parsed.
+
+**Signature Structure (Packed Bytes):**
+A standard 65-byte ECDSA signature, as typically concatenated, is structured as follows:
+
+1. `r` **component**: First 32 bytes.
+
+2. `s` **component**: Next 32 bytes.
+
+3. `v` **component**: Final 1 byte.
+
+**Assembly Operations Explained**:
+
+  * **Memory Layout of** `bytes memory sig`: When a `bytes memory` variable like `sig` is passed to an assembly block, the sig variable itself holds a pointer to the length of the byte array. The actual byte data begins 32 bytes (0x20 bytes) after this pointer.
+
+     * `add(sig, 0x20)`: This expression calculates the memory address of the first byte of the actual signature data. `0x20` is hexadecimal for 32.
+
+  * **Loading** `r`:
+  ```assembly
+  r := mload(add(sig, 0x20))
+  ```
+  The `mload` opcode loads 32 bytes from the specified memory address. Here, it loads the first 32 bytes of the signature data (which correspond to the `r` value) from `sig + 0x20` and assigns them to the `r` return variable.
+
+  * **Loading** `s`
+  ```assembly
+  s := mload(add(sig, 0x40))
+  ```
+  This loads 32 bytes starting from the memory address `sig + 0x40`. `0x40` is hexadecimal for 64. This address effectively points to `start_of_data + 32_bytes_for_r`. Thus, it loads the 32 bytes representing the `s` value and assigns them to the `s` return variable.
+
+  * **Loading** `v`
+  ```assembly
+  v := byte(0, mload(add(sig, 0x60)))
+  ```
+  This is a two-step process for the 1-byte v value:
+ 
+  1. `mload(add(sig, 0x60))`: `0x60` is hexadecimal for 96. This address points to `start_of_data + 32_bytes_for_r + 32_bytes_for_s`. `mload` reads a full 32-byte word from this location. The v byte is the first byte within this 32-byte word.
+
+  2. `byte(0, ...)`: The `byte` opcode extracts a single byte from a 32-byte word. `byte(N, word)` extracts the Nth byte (0-indexed from the most significant byte on the left). Since `v` is the first (and only relevant) byte in the loaded word, `byte(0, ...)` isolates it and assigns it to the `uint8 v` return variable.
+
+## Understanding the Order of v, r, and s Components
+It's important to distinguish between how the signature components are packed and how they are conventionally used in function arguments:
+
+  * `Packed Signature Order (e.g., in `SIGNATURE` bytes variable)`:
+   `r` (32 bytes), `s` (32 bytes), `v` (1 byte).
+   This is the order assumed by the assembly code when reading from the `sig` byte array.
+
+  * **Function Arguments/Return Values Convention**:
+   The common convention for Solidity function arguments and return values (as seen in OpenZeppelin's ECDSA library and many contract interfaces that handle signatures) is `v, r, s`.
+   The `splitSignature` function adheres to this by returning the components in the order `(uint8 v, bytes32 r, bytes32 s)`.
+
+
+### Crucial Considerations for the 'v' Value
+The `v` (recovery identifier) value can sometimes require adjustment depending on the signing library used and the specific Ethereum Improvement Proposals (EIPs) in effect.
+
+* **Historical Context**: Originally, and in Bitcoin, v values were typically 27 or 28. Ethereum also used these values before EIP-155.
+
+* **EIP-155**: With EIP-155 (transaction replay protection on different chains), v values became chain-specific: `chain_id * 2 + 35` or `chain_id * 2 + 36`.
+
+* **Modern Libraries**: Some modern signing libraries or tools might return `v` as 0 or 1. In such cases, to make it compatible with `ecrecover` (which often expects 27 or 28 for non-EIP-155 signatures, or the EIP-155 compliant value), you might need to add 27 to the `v` value:
+```solidity
+// if (v < 27) {
+//     v = v + 27;
+// }
+```
+While the `splitSignature` function presented earlier doesn't include this adjustment, it's a critical point to be aware of. If signature verification fails, an incorrect `v` value is a common culprit. You may need to add this conditional adjustment based on the source of your signatures and the requirements of the contract function you're interacting with.
+
+

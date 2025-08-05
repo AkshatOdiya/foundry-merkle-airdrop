@@ -52,6 +52,13 @@ contract MerkleAirdrop is EIP712 {
     }
 
     // CEI Pattern
+    /**
+     *
+     * @param account The address that is eligible for and will receive the airdrop.
+     * @param amount  The amount of tokens to be claimed by account
+     * @param merkleProof The Merkle proof (an array of bytes32 values) that cryptographically verifies the eligibility of account for amount
+     * @param v r s: These are the three components of an EIP-712 compliant digital signature, provided by the account to authorize this transaction.
+     */
     // This function allows eligible users to claim the token
     function claim(address account, uint256 amount, bytes32[] calldata merkleProof, uint8 v, bytes32 r, bytes32 s)
         external
